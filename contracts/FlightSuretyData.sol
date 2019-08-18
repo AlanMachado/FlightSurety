@@ -12,21 +12,24 @@ contract FlightSuretyData {
     address private contractOwner;                                      // Account used to deploy contract
     bool private operational = true;                                    // Blocks all state changes throughout the contract if false
     uint airLineCount = 0;
+    uint flightCount = 1;
     uint constant minToAccept = 5;
+    uint constant flightStatusDefault = 0;
 
     struct Airline {
         uint id;
-        bool paid;
+        bool feePaid;
         bool accepted;
         uint[] votes;
     }
 
     struct Flight {
         uint id;
+        bytes32 key;
         address airline;
         string flightCode;
-        uint status;
         uint departureTime;
+        uint status;
         uint updatedTime;
     }
 
@@ -40,11 +43,12 @@ contract FlightSuretyData {
     }
 
     mapping(address => Airline) airlines;
-    mapping(uint => Flight) flights;
+    mapping(bytes32 => Flight) flights;
     mapping(uint => Insurance) insurances;
     mapping(address => uint[]) airlinesFlights;
     mapping(uint => uint[]) flightsInsurances;
     mapping(address => uint[]) passengersInsurances;
+    mapping(address => bool) authorizedCallers;
 
     /********************************************************************************************/
     /*                                       EVENT DEFINITIONS                                  */
@@ -52,6 +56,8 @@ contract FlightSuretyData {
     event AirlineAdded(uint id, address airline);
     event AirlineVote(address candidate, address voter);
     event AirlinePaidFund(address airline, uint amount);
+    event FlightAdded(uint id, address airline, string flightCode);
+    event FlightCodeChanged(bytes32 key, uint status);
 
     /**
     * @dev Constructor
@@ -60,7 +66,7 @@ contract FlightSuretyData {
     constructor() public {
         contractOwner = msg.sender;
         _registerAirline(msg.sender);
-        airlines[msg.sender].paid = true;
+        airlines[msg.sender].feePaid = true;
     }
 
     /********************************************************************************************/
@@ -100,7 +106,16 @@ contract FlightSuretyData {
     }
 
     modifier requirePaidAirline() {
-        require(airlines[msg.sender].paid, "To participate you must pay");
+        require(airlines[msg.sender].feePaid, "To participate you must pay");
+        _;
+    }
+
+    modifier requireAirlineOperable(address airline) {
+        require(airlines[airline].feePaid && airlines[airline].accepted, "Airline isn't operable");
+    }
+
+    modifier requireAuthorized() {
+        require(authorizedCallers[msg.sender], "You don't have authorization");
         _;
     }
 
@@ -117,6 +132,17 @@ contract FlightSuretyData {
         }
 
         require (!found, "You already vote for this new Airline");
+        _;
+    }
+
+    modifier requireNotRegistered(string memory flightCode, uint departureTimestamp, address airlineAddress) {
+        bytes32 key = getFlightKey(flightCode, departureTimestamp, airlineAddress);
+        require(flightKeyToId[key] == 0, "The flight has already been created!");
+        _;
+    }
+
+    modifier requireFlight(bytes32 key) {
+        require(flights[keys].id > 0, "Flight must exist");
         _;
     }
 
@@ -143,6 +169,10 @@ contract FlightSuretyData {
         operational = mode;
     }
 
+    function setAuthorizedCaller(address caller) external requireContractOwner {
+        authorizedCallers[caller] = true;
+    }
+
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
     /********************************************************************************************/
@@ -165,6 +195,36 @@ contract FlightSuretyData {
         emit AirlineAdded(newAirline.id, airline);
     }
 
+    function registerFlight(string memory flightCode, uint departureTime, address airline) external requireIsOperational requireAuthorized requireAirlineOperable(airline) {
+        bytes32 key = getFlightKey(airline, flightCode, departureTime);
+        require(flights[keys].id == 0, "must be a new Flight");
+
+        Flight newFlight = Flight(flightCount, key, airline, flightCode, departureTime, flightStatusDefault, departureTime);
+        flights[key] = newFlight;
+        flightCount++;
+
+        airlinesFlights[airline].push(newFlight.id);
+
+        emit FlightAdded(newFlight.id, newFlight.airline, newFlight.flightCode);
+    }
+
+    function setFlightCode(bytes32 key, uint status, uint updateTime) external requireIsOperational requireAuthorized requireFlight(key) {
+        flights[key].status = status;
+        flights[key].updateTime = updateTime;
+
+        emit FlightCodeChanged(key, status);
+    }
+
+    function getFlight(string memory flightCode, uint departureTime, address airline) external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
+        bytes32 key = getFlightKey(airline, flightCode, departureTime);
+        Flight memory flight = flights[key];
+        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updateTime);
+    }
+
+    function getFlight(bytes32 key) external view external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
+        Flight memory flight = flights[key];
+        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updateTime);
+    }
 
     /**
      * @dev Buy insurance for a flight
@@ -195,7 +255,7 @@ contract FlightSuretyData {
      */
     function fund() public payable requireIsOperational requireBeAnAirline {
         require(msg.value >= 10 ether, "You didn't pay enough");
-        airlines[msg.sender].paid = true;
+        airlines[msg.sender].feePaid = true;
         emit AirlinePaidFund(msg.sender, msg.value);
     }
 
