@@ -13,6 +13,7 @@ contract FlightSuretyData {
     bool private operational = true;                                    // Blocks all state changes throughout the contract if false
     uint airLineCount = 0;
     uint flightCount = 1;
+    uint insuranceCount = 1;
     uint constant minToAccept = 5;
     uint constant flightStatusDefault = 0;
 
@@ -33,10 +34,10 @@ contract FlightSuretyData {
         uint updatedTime;
     }
 
-    enum InsuranceState {Sleeping, Expired, Refunded}
+    enum InsuranceState {Valid, Expired, Refunded}
     struct Insurance{
         uint id;
-        uint flightId;
+        bytes32 flightId;
         uint amountPaid;
         address passenger;
         InsuranceState state;
@@ -46,9 +47,10 @@ contract FlightSuretyData {
     mapping(bytes32 => Flight) flights;
     mapping(uint => Insurance) insurances;
     mapping(address => uint[]) airlinesFlights;
-    mapping(uint => uint[]) flightsInsurances;
+    mapping(uint => bytes32[]) flightsInsurances;
     mapping(address => uint[]) passengersInsurances;
     mapping(address => bool) authorizedCallers;
+    mapping(address => uint) passengersFund;
 
     /********************************************************************************************/
     /*                                       EVENT DEFINITIONS                                  */
@@ -58,6 +60,9 @@ contract FlightSuretyData {
     event AirlinePaidFund(address airline, uint amount);
     event FlightAdded(uint id, address airline, string flightCode);
     event FlightCodeChanged(bytes32 key, uint status);
+    event FlightStatusUpdated(bytes32 key, uint status, uint time);
+    event InsuranceAdded(uint id, bytes32 flightId);
+    event InsuranceRefunded(uint id);
 
     /**
     * @dev Constructor
@@ -95,18 +100,18 @@ contract FlightSuretyData {
         _;
     }
 
-    modifier requireBeAnAirline() {
-        require(airlines[msg.sender] != address(0), "You must be an airline");
+    modifier requireBeAnAirline(address airline) {
+        require(airlines[airline] != address(0), "You must be an airline");
         _;
     }
 
-    modifier requireAcceptedAirline() {
-        require(airlines[msg.sender].accepted, "To vote you must be accepted first");
+    modifier requireAcceptedAirline(address airline) {
+        require(airlines[airline].accepted, "To vote you must be accepted first");
         _;
     }
 
-    modifier requirePaidAirline() {
-        require(airlines[msg.sender].feePaid, "To participate you must pay");
+    modifier requirePaidAirline(address airline) {
+        require(airlines[airline].feePaid, "To participate you must pay");
         _;
     }
 
@@ -146,6 +151,23 @@ contract FlightSuretyData {
         _;
     }
 
+    modifier requireInsurance(uint id) {
+        require(insurances[id].id > 0, "Insurance doesn't exists");
+        _;
+    }
+
+    modifier insuranceWithState(uint id, InsuranceState state) {
+        require(insurances[id].state == state, "Insurance isn't on this state");
+        _;
+    }
+
+    modifier isPassengerInsurance(uint id) {
+        require(insurances[id].passenger == msg.sender, "You are not the insurance owner");
+        _;
+    }
+
+
+
     /********************************************************************************************/
     /*                                       UTILITY FUNCTIONS                                  */
     /********************************************************************************************/
@@ -182,13 +204,13 @@ contract FlightSuretyData {
      *      Can only be called from FlightSuretyApp contract
      *
      */
-    function registerAirline(address airline) external requireIsOperational requireBeAnAirline requireAcceptedAirline requirePaidAirline{
-        _registerAirline(airline);
+    function registerAirline(address airline, address elector) external requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector){
+        _registerAirline(airline, elector);
     }
 
-    function _registerAirline(address airline) internal {
+    function _registerAirline(address airline, address elector) internal {
         Airline newAirline = Airline(airLineCount, false, airLineCount <= 4);
-        newAirline.votes.push(airlines[msg.sender].id);
+        newAirline.votes.push(airlines[elector].id);
         airLineCount++;
         airlines[airline] = newAirline;
 
@@ -226,18 +248,40 @@ contract FlightSuretyData {
         return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updateTime);
     }
 
-    /**
-     * @dev Buy insurance for a flight
-     *
-     */
-    function buy() external payable {
+    function setFlightDepartureStatus(bytes32 key, uint departureStatus, uint updateTime) external requireIsOperational requireAuthorized requireFlight(key) {
+        flights[key].status = departureStatus;
+        flights[key].updatedTime = updateTime;
 
+        emit FlightStatusUpdated(key, departureStatus, updateTime);
+    }
+
+    function buyInsurance(bytes32 flightId, address passenger) external payable requireIsOperational requireAuthorized requireFlight(key) {
+        Insurance insurance = Insurance(insuranceCount, flightId, msg.value, passenger, InsuranceState.Valid);
+        insurances[insuranceCount] = insurance;
+        flightsInsurances[insuranceCount].push(flightId);
+
+        insuranceCount++;
+
+        emit InsuranceAdded(insurance.id, insurance.flightId);
+    }
+
+    function getInsurance(uint id) external view requireIsOperational requireAuthorized returns (string memory flightCode, uint departureTime, uint flightStatus, uint amountPaid, uint insuranceState) {
+        Insurance memory insurance = insurances[id];
+        Flight memory flight = flights[insurance.flightId];
+
+        return (flight.flightCode, flight.departureTime, flight.status, insurance.amountPaid, insurance.state);
     }
 
     /**
      *  @dev Credits payouts to insurees
     */
-    function creditInsurees() external pure {
+    function creditInsurees(uint id, uint multiplier) external requireIsOperational requireAuthorized insuranceWithState(InsuranceState.Valid) {
+        Insurance memory insurance = insurances[id];
+        insurances[id].state = InsuranceState.Refunded;
+        uint amountPaid = insurance.amountPaid;
+        passengersFund[insurance.passenger] = passengersFund[insurance.passenger].add(multiplier.mul(amountPaid));
+
+        emit InsuranceRefunded(id);
     }
 
 
@@ -245,7 +289,12 @@ contract FlightSuretyData {
      *  @dev Transfers eligible payout funds to insuree
      *
     */
-    function pay() external pure {
+    function pay(address payable passenger) external payable requireIsOperational requireAuthorized {
+        require(passengersFund[passenger] > 0, "Passenger doesn't have funds");
+        uint toRefund = passengersFund[passenger];
+        passengersFund[passenger] = passengersFund[passenger].sub(toRefund);
+
+        passenger.transfer(toRefund);
     }
 
     /**
@@ -253,21 +302,21 @@ contract FlightSuretyData {
      *      resulting in insurance payouts, the contract should be self-sustaining
      *
      */
-    function fund() public payable requireIsOperational requireBeAnAirline {
+    function fund(address airline) public payable requireIsOperational requireBeAnAirline {
         require(msg.value >= 10 ether, "You didn't pay enough");
-        airlines[msg.sender].feePaid = true;
-        emit AirlinePaidFund(msg.sender, msg.value);
+        airlines[airline].feePaid = true;
+        emit AirlinePaidFund(airline, msg.value);
     }
 
     function getFlightKey(address airline, string memory flight, uint256 timestamp) pure internal returns (bytes32){
         return keccak256(abi.encodePacked(airline, flight, timestamp));
     }
 
-    function voteAirline(address airline) public requireIsOperational requireBeAnAirline requireAcceptedAirline requirePaidAirline didntVote(airline) {
-        airlines[airline].votes.push(airlines[msg.sender].id);
+    function voteAirline(address airline, address elector) public requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector) didntVote(elector) {
+        airlines[airline].votes.push(airlines[elector].id);
         airlines[airline].accepted = airlines[airline].votes.length > minToAccept;
 
-        emit AirlineVote(airline, msg.sender);
+        emit AirlineVote(airline, elector);
     }
 
     /**
@@ -275,7 +324,7 @@ contract FlightSuretyData {
     *
     */
     function() external payable {
-        fund();
+        fund(msg.sender);
     }
 
 
