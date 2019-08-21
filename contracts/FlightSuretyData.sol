@@ -14,7 +14,6 @@ contract FlightSuretyData {
     uint airLineCount = 0;
     uint flightCount = 1;
     uint insuranceCount = 1;
-    uint constant minToAccept = 5;
     uint constant flightStatusDefault = 0;
 
     struct Airline {
@@ -47,7 +46,6 @@ contract FlightSuretyData {
     mapping(bytes32 => Flight) flights;
     mapping(uint => Insurance) insurances;
     mapping(address => uint[]) airlinesFlights;
-    mapping(uint => bytes32[]) flightsInsurances;
     mapping(address => uint[]) passengersInsurances;
     mapping(address => bool) authorizedCallers;
     mapping(address => uint) passengersFund;
@@ -181,6 +179,36 @@ contract FlightSuretyData {
         return operational;
     }
 
+    function isAirlineRegistered(address airline) public view returns (bool) {
+        return airlines[airline].id > 0;
+    }
+
+    function isAirlineAccepted(address airline) public view returns (bool) {
+        return airlines[airline].accepted;
+    }
+
+    function isAirlineFunded(address airline) public view returns (bool) {
+        return airline[airline].feePaid;
+    }
+
+    function isFlightRegistered(address airline, string memory flightCode, uint departureTime) public view returns (bool) {
+        bytes32 memory key = getFlightKey(airline, flightCode, departureTime);
+        return flights[key].id > 0;
+    }
+
+    function isPassengerInsured(address passenger, address airline, string memory flightCode, uint departureTime) public view returns (bool) {
+        bool insured = false;
+        bytes32 memory key = getFlightKey(airline, flightCode, departureTime);
+        uint [] memory passengerInsurances = passengersInsurances[passenger];
+        for (uint i = 0; i < passengerInsurances.length; i++) {
+            if (insurances[passengersInsurances[i]].flightId == key) {
+                insured = true;
+                break;
+            }
+        }
+        return insured;
+    }
+
 
     /**
     * @dev Sets contract operations on/off
@@ -258,8 +286,7 @@ contract FlightSuretyData {
     function buyInsurance(bytes32 flightId, address passenger) external payable requireIsOperational requireAuthorized requireFlight(key) {
         Insurance insurance = Insurance(insuranceCount, flightId, msg.value, passenger, InsuranceState.Valid);
         insurances[insuranceCount] = insurance;
-        flightsInsurances[insuranceCount].push(flightId);
-
+        passengersInsurances[passenger].push(insurance.id);
         insuranceCount++;
 
         emit InsuranceAdded(insurance.id, insurance.flightId);
@@ -312,9 +339,9 @@ contract FlightSuretyData {
         return keccak256(abi.encodePacked(airline, flight, timestamp));
     }
 
-    function voteAirline(address airline, address elector) public requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector) didntVote(elector) {
+    function voteAirline(address airline, address elector, uint minimum) public requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector) didntVote(elector) {
         airlines[airline].votes.push(airlines[elector].id);
-        airlines[airline].accepted = airlines[airline].votes.length > minToAccept;
+        airlines[airline].accepted = airlines[airline].votes.length > minimum;
 
         emit AirlineVote(airline, elector);
     }

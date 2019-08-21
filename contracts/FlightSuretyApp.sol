@@ -5,6 +5,7 @@ pragma solidity ^0.4.25;
 // More info: https://www.nccgroup.trust/us/about-us/newsroom-and-events/blog/2018/november/smart-contract-insecurity-bad-arithmetic/
 
 import "../node_modules/openzeppelin-solidity/contracts/math/SafeMath.sol";
+import "./FlightSuretyData.sol";
 
 /************************************************** */
 /* FlightSurety Smart Contract                      */
@@ -15,7 +16,7 @@ contract FlightSuretyApp {
     /********************************************************************************************/
     /*                                       DATA VARIABLES                                     */
     /********************************************************************************************/
-
+    FlightSuretyData flightData;
     // Flight status codees
     uint8 private constant STATUS_CODE_UNKNOWN = 0;
     uint8 private constant STATUS_CODE_ON_TIME = 10;
@@ -24,7 +25,14 @@ contract FlightSuretyApp {
     uint8 private constant STATUS_CODE_LATE_TECHNICAL = 40;
     uint8 private constant STATUS_CODE_LATE_OTHER = 50;
 
-    address private contractOwner;          // Account used to deploy contract
+    // Account used to deploy contract
+    address private contractOwner;
+
+    enum Multiplier {
+        noPAYER, simple, plus
+    }
+
+    uint private constant minToAccept = 5;
 
     struct Flight {
         bool isRegistered;
@@ -48,10 +56,9 @@ contract FlightSuretyApp {
     *      This is used on all state changing functions to pause the contract in 
     *      the event there is an issue that needs to be fixed
     */
-    modifier requireIsOperational()
-    {
+    modifier requireIsOperational() {
         // Modify to call data contract's status
-        require(true, "Contract is currently not operational");
+        require(isOperational(), "Contract is currently not operational");
         _;
         // All modifiers require an "_" which indicates where the function body will be added
     }
@@ -59,9 +66,23 @@ contract FlightSuretyApp {
     /**
     * @dev Modifier that requires the "ContractOwner" account to be the function caller
     */
-    modifier requireContractOwner()
-    {
+    modifier requireContractOwner() {
         require(msg.sender == contractOwner, "Caller is not contract owner");
+        _;
+    }
+
+    modifier requireAirlineRegistered() {
+        require(flightData.isAirlineRegistered(msg.sender), "Caller is not a registered airline");
+        _;
+    }
+
+    modifier requireAirlineFunded() {
+        require(flightData.isAirlineFunded(msg.sender), "Caller is not a funded airline");
+        _;
+    }
+
+    modifier requireAirlineAccepted() {
+        require(flightData.isAirlineAccepted(msg.sender), "Caller is not a accepted airline");
         _;
     }
 
@@ -73,8 +94,9 @@ contract FlightSuretyApp {
     * @dev Contract constructor
     *
     */
-    constructor() public {
+    constructor(address payable dataContract) public {
         contractOwner = msg.sender;
+        flightData = FlightSuretyData(dataContract);
     }
 
     /********************************************************************************************/
@@ -82,8 +104,38 @@ contract FlightSuretyApp {
     /********************************************************************************************/
 
     function isOperational() public pure returns (bool){
-        return true;
+        return flightData.isOperational();
         // Modify to call data contract's status
+    }
+
+    function setOperational(bool op) public requireContractOwner {
+        flightData.setOperatingStatus(op);
+    }
+
+    function isAirlineRegistered(address airline) public view returns (bool) {
+        require(airline != address(0), "airline must be a valid address.");
+        return flightData.isAirlineRegistered(airline);
+    }
+
+    function isAirlineAccepted(address airline) public view returns (bool) {
+        require(airline != address(0), "airline must be a valid address.");
+        return flightData.isAirlineAccepted(airline);
+    }
+
+    function isAirlineFunded(address airline) public view returns (bool) {
+        require(airline != address(0), "airline must be a valid address.");
+        return flightData.isAirlineFunded(airline);
+    }
+
+    function isPassengerInsured(address passenger, address airline, string memory flightCode, uint departureTime) public view returns (bool) {
+        require(isAirlineAccepted(airline), "airline not even accepted");
+        require(isFlightRegistered(airline, flightCode, departureTime), "Flight isn't registered");
+        return flightData.isPassengerInsured(passenger, airline, flightCode, departureTime);
+    }
+
+    function isFlightRegistered(address airline, string memory flightCode, uint departureTime) public view returns (bool) {
+        require(isAirlineAccepted(airline), "airline not even accepted");
+        return flightData.isFlightRegistered(airline, flightCode, departureTime);
     }
 
     /********************************************************************************************/
@@ -95,8 +147,10 @@ contract FlightSuretyApp {
      * @dev Add an airline to the registration queue
      *
      */
-    function registerAirline() external pure returns (bool success, uint256 votes){
-        return (success, 0);
+    function registerAirline(address newAirline) external requireIsOperational requireAirlineRegistered requireAirlineFunded requireAirlineAccepted returns (bool success, uint256 votes){
+        require(!isAirlineRegistered(newAirline), "Airline already registered");
+        flightData.registerAirline(newAirline, msg.sender);
+        return isAirlineRegistered(candidate);
     }
 
 
