@@ -33,6 +33,7 @@ contract FlightSuretyApp {
     }
 
     uint private constant minToAccept = 5;
+    uint private constant fundCost = 10 ether;
 
     struct Flight {
         bool isRegistered;
@@ -84,6 +85,19 @@ contract FlightSuretyApp {
     modifier requireAirlineAccepted() {
         require(flightData.isAirlineAccepted(msg.sender), "Caller is not a accepted airline");
         _;
+    }
+
+    modifier fundedEnough() {
+        require(msg.value >= fundCost, "Insufficient funding");
+        _;
+    }
+
+    modifier sendChange() {
+        _;
+        uint amountToReturn = msg.value - 10 ether;
+        if(amountToReturn > 0){
+            msg.sender.transfer(amountToReturn);
+        }
     }
 
     /********************************************************************************************/
@@ -138,6 +152,17 @@ contract FlightSuretyApp {
         return flightData.isFlightRegistered(airline, flightCode, departureTime);
     }
 
+    function defineInsuranceMultiplier(uint value) internal returns (uint multi){
+        uint memory multi;
+        if (value <= Multiplier.simple) {
+            multi = Multiplier.simple;
+        } else if( value <= Multiplier.plus) {
+            multi = Multiplier.plus;
+        }
+
+        return multi;
+    }
+
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
     /********************************************************************************************/
@@ -147,27 +172,47 @@ contract FlightSuretyApp {
      * @dev Add an airline to the registration queue
      *
      */
-    function registerAirline(address newAirline) external requireIsOperational requireAirlineRegistered requireAirlineFunded requireAirlineAccepted returns (bool success, uint256 votes){
-        require(!isAirlineRegistered(newAirline), "Airline already registered");
-        flightData.registerAirline(newAirline, msg.sender);
-        return isAirlineRegistered(candidate);
+    function registerAirline(address newAirline) external requireIsOperational requireAirlineRegistered requireAirlineFunded requireAirlineAccepted returns (bool success){
+        bool memory registered = isAirlineRegistered(newAirline);
+        bool memory accepted = isAirlineAccepted(newAirline);
+        if (registered && !accepted) {
+            flightData.voteAirline(newAirline, msg.sender, minToAccept);
+        } else if(!registered){
+            flightData.registerAirline(newAirline, msg.sender);
+        }
+        return isAirlineRegistered(newAirline);
     }
 
+    function fundAirline() external payable requireIsOperational requireAirlineRegistered fundedEnough sendChange returns (bool success){
+        require(!isAirlineFunded(msg.sender), "Airline already funded");
+        flightData.fund.value(fundCost)(msg.sender);
+        return isAirlineFunded(msg.sender);
+    }
 
-    /**
-     * @dev Register a future flight for insuring.
-     *
-     */
-    function registerFlight() external pure {
+    function registerFlight(string memory flightCode, uint departureTime) public requireAirlineFunded requireAirlineRegistered {
+        flightData.registerFlight(msg.sender, flightCode, departureTime);
+    }
+
+    function InsureFlight(address airline, string memory flight, uint departureTime) public payable returns(uint id){
+        bytes32 key = getFlightKey(airline, flight, departureTime);
+        flightData.buyInsurance.value(msg.value)(key, msg.sender);
+
 
     }
 
-    /**
-     * @dev Called after oracle has updated flight status
-     *
-     */
-    function processFlightStatus(address airline, string memory flight, uint256 timestamp, uint8 statusCode) internal pure {
+    function processFlightStatus(address airline, string memory flightCode, uint256 departureTime, uint8 statusCode) internal requireIsOperational {
+        if (statusCode == STATUS_CODE_LATE_AIRLINE) {
 
+            bytes32 key = getFlightKey(airline, flightCode, departureTime);
+            uint[] memory _insurances = flightData.getInsurancesFromFlight(key);
+            uint multi = Multiplier.noPAYER;
+
+            for (uint i = 0; i < _insurances.length; i++) {
+                (, uint amountPaid,) = flightData.getInsurance(_insurances[i]);
+                multi = defineInsuranceMultiplier(amountPaid);
+                flightData.creditInsurees(_insurances[i], multi);
+            }
+        }
     }
 
 
@@ -175,14 +220,16 @@ contract FlightSuretyApp {
     function fetchFlightStatus(address airline, string flight, uint256 timestamp) external {
         uint8 index = getRandomIndex(msg.sender);
 
-        // Generate a unique key for storing the request
         bytes32 key = keccak256(abi.encodePacked(index, airline, flight, timestamp));
         oracleResponses[key] = ResponseInfo({
             requester : msg.sender,
-            isOpen : true
-            });
+            isOpen : true});
 
         emit OracleRequest(index, airline, flight, timestamp);
+    }
+
+    function withdrawCredits() public requireIsOperational {
+        flightData.pay(msg.sender);
     }
 
 

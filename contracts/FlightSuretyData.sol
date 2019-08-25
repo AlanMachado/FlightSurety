@@ -15,6 +15,7 @@ contract FlightSuretyData {
     uint flightCount = 1;
     uint insuranceCount = 1;
     uint constant flightStatusDefault = 0;
+    uint constant airlineApprovesMin = 4;
 
     struct Airline {
         uint id;
@@ -46,6 +47,7 @@ contract FlightSuretyData {
     mapping(bytes32 => Flight) flights;
     mapping(uint => Insurance) insurances;
     mapping(address => uint[]) airlinesFlights;
+    mapping(bytes32 => uint[]) flightsInsurances;
     mapping(address => uint[]) passengersInsurances;
     mapping(address => bool) authorizedCallers;
     mapping(address => uint) passengersFund;
@@ -68,6 +70,7 @@ contract FlightSuretyData {
     */
     constructor() public {
         contractOwner = msg.sender;
+        authorizedCallers[msg.sender] = 1;
         _registerAirline(msg.sender);
         airlines[msg.sender].feePaid = true;
     }
@@ -118,7 +121,7 @@ contract FlightSuretyData {
     }
 
     modifier requireAuthorized() {
-        require(authorizedCallers[msg.sender], "You don't have authorization");
+        require(authorizedCallers[msg.sender] == 1, "You don't have authorization");
         _;
     }
 
@@ -219,10 +222,6 @@ contract FlightSuretyData {
         operational = mode;
     }
 
-    function setAuthorizedCaller(address caller) external requireContractOwner {
-        authorizedCallers[caller] = true;
-    }
-
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
     /********************************************************************************************/
@@ -232,12 +231,12 @@ contract FlightSuretyData {
      *      Can only be called from FlightSuretyApp contract
      *
      */
-    function registerAirline(address airline, address elector) external requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector){
+    function registerAirline(address airline, address elector) external requireIsOperational requireAuthorized requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector){
         _registerAirline(airline, elector);
     }
 
     function _registerAirline(address airline, address elector) internal {
-        Airline newAirline = Airline(airLineCount, false, airLineCount <= 4);
+        Airline newAirline = Airline(airLineCount, false, airLineCount <= airlineApprovesMin);
         newAirline.votes.push(airlines[elector].id);
         airLineCount++;
         airlines[airline] = newAirline;
@@ -245,7 +244,7 @@ contract FlightSuretyData {
         emit AirlineAdded(newAirline.id, airline);
     }
 
-    function registerFlight(string memory flightCode, uint departureTime, address airline) external requireIsOperational requireAuthorized requireAirlineOperable(airline) {
+    function registerFlight(address airline, string memory flightCode, uint departureTime) external requireIsOperational requireAuthorized requireAirlineOperable(airline) {
         bytes32 key = getFlightKey(airline, flightCode, departureTime);
         require(flights[keys].id == 0, "must be a new Flight");
 
@@ -287,16 +286,20 @@ contract FlightSuretyData {
         Insurance insurance = Insurance(insuranceCount, flightId, msg.value, passenger, InsuranceState.Valid);
         insurances[insuranceCount] = insurance;
         passengersInsurances[passenger].push(insurance.id);
+        flightsInsurances[flightId].push(insurance.id);
         insuranceCount++;
 
         emit InsuranceAdded(insurance.id, insurance.flightId);
     }
 
-    function getInsurance(uint id) external view requireIsOperational requireAuthorized returns (string memory flightCode, uint departureTime, uint flightStatus, uint amountPaid, uint insuranceState) {
+    function getInsurance(uint id) external view requireIsOperational requireAuthorized returns (address passenger, uint amountPaid, uint insuranceState) {
         Insurance memory insurance = insurances[id];
-        Flight memory flight = flights[insurance.flightId];
 
-        return (flight.flightCode, flight.departureTime, flight.status, insurance.amountPaid, insurance.state);
+        return (insurances.passenger, insurance.amountPaid, insurance.state);
+    }
+
+    function getInsurancesFromFlight(bytes32 flightId) external view requireIsOperational requireAuthorized returns (uint[] memory _insurances) {
+        return flightsInsurances[flightId];
     }
 
     /**
@@ -329,7 +332,7 @@ contract FlightSuretyData {
      *      resulting in insurance payouts, the contract should be self-sustaining
      *
      */
-    function fund(address airline) public payable requireIsOperational requireBeAnAirline {
+    function fund(address airline) public payable requireIsOperational requireAuthorized requireBeAnAirline(airline) {
         require(msg.value >= 10 ether, "You didn't pay enough");
         airlines[airline].feePaid = true;
         emit AirlinePaidFund(airline, msg.value);
@@ -339,11 +342,19 @@ contract FlightSuretyData {
         return keccak256(abi.encodePacked(airline, flight, timestamp));
     }
 
-    function voteAirline(address airline, address elector, uint minimum) public requireIsOperational requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector) didntVote(elector) {
+    function voteAirline(address airline, address elector, uint minimum) public requireIsOperational requireAuthorized requireBeAnAirline(elector) requireAcceptedAirline(elector) requirePaidAirline(elector) didntVote(elector) {
         airlines[airline].votes.push(airlines[elector].id);
         airlines[airline].accepted = airlines[airline].votes.length > minimum;
 
         emit AirlineVote(airline, elector);
+    }
+
+    function authorizeContract(address addressToAuth) external requireIsOperational requireContractOwner {
+        authorizedCallers[addressToAuth] = 1;
+    }
+
+    function deauthorizeContract(address dataContract) external requireIsOperational requireContractOwner {
+        delete authorizedCallers[dataContract];
     }
 
     /**
