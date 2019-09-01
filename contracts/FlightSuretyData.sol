@@ -1,4 +1,4 @@
-pragma solidity ^0.4.25;
+pragma solidity ^0.5.8;
 
 import "../node_modules/openzeppelin-solidity/contracts/math/SafeMath.sol";
 
@@ -49,7 +49,7 @@ contract FlightSuretyData {
     mapping(address => uint[]) airlinesFlights;
     mapping(bytes32 => uint[]) flightsInsurances;
     mapping(address => uint[]) passengersInsurances;
-    mapping(address => bool) authorizedCallers;
+    mapping(address => uint) authorizedCallers;
     mapping(address => uint) passengersFund;
 
     /********************************************************************************************/
@@ -71,7 +71,7 @@ contract FlightSuretyData {
     constructor() public {
         contractOwner = msg.sender;
         authorizedCallers[msg.sender] = 1;
-        _registerAirline(msg.sender);
+        _registerAirline(msg.sender, msg.sender);
         airlines[msg.sender].feePaid = true;
     }
 
@@ -102,7 +102,7 @@ contract FlightSuretyData {
     }
 
     modifier requireBeAnAirline(address airline) {
-        require(airlines[airline] != address(0), "You must be an airline");
+        require(airlines[airline].id != 0, "You must be an airline");
         _;
     }
 
@@ -118,6 +118,7 @@ contract FlightSuretyData {
 
     modifier requireAirlineOperable(address airline) {
         require(airlines[airline].feePaid && airlines[airline].accepted, "Airline isn't operable");
+        _;
     }
 
     modifier requireAuthorized() {
@@ -142,13 +143,13 @@ contract FlightSuretyData {
     }
 
     modifier requireNotRegistered(string memory flightCode, uint departureTimestamp, address airlineAddress) {
-        bytes32 key = getFlightKey(flightCode, departureTimestamp, airlineAddress);
-        require(flightKeyToId[key] == 0, "The flight has already been created!");
+        bytes32 key = getFlightKey(airlineAddress, flightCode, departureTimestamp);
+        require(flights[key].id == 0, "The flight has already been created!");
         _;
     }
 
     modifier requireFlight(bytes32 key) {
-        require(flights[keys].id > 0, "Flight must exist");
+        require(flights[key].id > 0, "Flight must exist");
         _;
     }
 
@@ -191,20 +192,20 @@ contract FlightSuretyData {
     }
 
     function isAirlineFunded(address airline) public view returns (bool) {
-        return airline[airline].feePaid;
+        return airlines[airline].feePaid;
     }
 
     function isFlightRegistered(address airline, string memory flightCode, uint departureTime) public view returns (bool) {
-        bytes32 memory key = getFlightKey(airline, flightCode, departureTime);
+        bytes32 key = getFlightKey(airline, flightCode, departureTime);
         return flights[key].id > 0;
     }
 
     function isPassengerInsured(address passenger, address airline, string memory flightCode, uint departureTime) public view returns (bool) {
         bool insured = false;
-        bytes32 memory key = getFlightKey(airline, flightCode, departureTime);
+        bytes32 key = getFlightKey(airline, flightCode, departureTime);
         uint [] memory passengerInsurances = passengersInsurances[passenger];
         for (uint i = 0; i < passengerInsurances.length; i++) {
-            if (insurances[passengersInsurances[i]].flightId == key) {
+            if (insurances[passengerInsurances[i]].flightId == key) {
                 insured = true;
                 break;
             }
@@ -236,19 +237,20 @@ contract FlightSuretyData {
     }
 
     function _registerAirline(address airline, address elector) internal {
-        Airline newAirline = Airline(airLineCount, false, airLineCount <= airlineApprovesMin);
-        newAirline.votes.push(airlines[elector].id);
+        airlines[airline].id = airLineCount;
+        airlines[airline].feePaid = false;
+        airlines[airline].accepted = airLineCount <= airlineApprovesMin;
+        airlines[airline].votes.push(airlines[elector].id);
         airLineCount++;
-        airlines[airline] = newAirline;
 
-        emit AirlineAdded(newAirline.id, airline);
+        emit AirlineAdded(airlines[airline].id, airline);
     }
 
-    function registerFlight(address airline, string memory flightCode, uint departureTime) external requireIsOperational requireAuthorized requireAirlineOperable(airline) {
+    function registerFlight(address airline, string calldata flightCode, uint departureTime) external requireIsOperational requireAuthorized requireAirlineOperable(airline) {
         bytes32 key = getFlightKey(airline, flightCode, departureTime);
-        require(flights[keys].id == 0, "must be a new Flight");
+        require(flights[key].id == 0, "must be a new Flight");
 
-        Flight newFlight = Flight(flightCount, key, airline, flightCode, departureTime, flightStatusDefault, departureTime);
+        Flight memory newFlight = Flight(flightCount, key, airline, flightCode, departureTime, flightStatusDefault, departureTime);
         flights[key] = newFlight;
         flightCount++;
 
@@ -259,20 +261,20 @@ contract FlightSuretyData {
 
     function setFlightCode(bytes32 key, uint status, uint updateTime) external requireIsOperational requireAuthorized requireFlight(key) {
         flights[key].status = status;
-        flights[key].updateTime = updateTime;
+        flights[key].updatedTime = updateTime;
 
         emit FlightCodeChanged(key, status);
     }
 
-    function getFlight(string memory flightCode, uint departureTime, address airline) external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
-        bytes32 key = getFlightKey(airline, flightCode, departureTime);
-        Flight memory flight = flights[key];
-        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updateTime);
+    function getFlight(string calldata _flightCode, uint departureTime, address airline) external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
+        bytes32 _key = getFlightKey(airline, _flightCode, departureTime);
+        Flight memory flight = flights[_key];
+        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updatedTime);
     }
 
-    function getFlight(bytes32 key) external view external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
-        Flight memory flight = flights[key];
-        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updateTime);
+    function getFlight(bytes32 _key) external view requireIsOperational requireAuthorized  returns (bytes32 key, address airlineAddress, string memory flightCode, uint departureStatusCode, uint departureTimestamp, uint updatedTimestamp){
+        Flight memory flight = flights[_key];
+        return (flight.key, flight.airline, flight.flightCode, flight.status,  flight.departureTime, flight.updatedTime);
     }
 
     function setFlightDepartureStatus(bytes32 key, uint departureStatus, uint updateTime) external requireIsOperational requireAuthorized requireFlight(key) {
@@ -282,8 +284,8 @@ contract FlightSuretyData {
         emit FlightStatusUpdated(key, departureStatus, updateTime);
     }
 
-    function buyInsurance(bytes32 flightId, address passenger) external payable requireIsOperational requireAuthorized requireFlight(key) {
-        Insurance insurance = Insurance(insuranceCount, flightId, msg.value, passenger, InsuranceState.Valid);
+    function buyInsurance(bytes32 flightId, address passenger) external payable requireIsOperational requireAuthorized requireFlight(flightId) {
+        Insurance memory insurance = Insurance(insuranceCount, flightId, msg.value, passenger, InsuranceState.Valid);
         insurances[insuranceCount] = insurance;
         passengersInsurances[passenger].push(insurance.id);
         flightsInsurances[flightId].push(insurance.id);
@@ -295,7 +297,7 @@ contract FlightSuretyData {
     function getInsurance(uint id) external view requireIsOperational requireAuthorized returns (address passenger, uint amountPaid, uint insuranceState) {
         Insurance memory insurance = insurances[id];
 
-        return (insurances.passenger, insurance.amountPaid, insurance.state);
+        return (insurance.passenger, insurance.amountPaid, uint(insurance.state));
     }
 
     function getInsurancesFromFlight(bytes32 flightId) external view requireIsOperational requireAuthorized returns (uint[] memory _insurances) {
@@ -305,7 +307,7 @@ contract FlightSuretyData {
     /**
      *  @dev Credits payouts to insurees
     */
-    function creditInsurees(uint id, uint multiplier) external requireIsOperational requireAuthorized insuranceWithState(InsuranceState.Valid) {
+    function creditInsurees(uint id, uint multiplier) external requireIsOperational requireAuthorized insuranceWithState(id, InsuranceState.Valid) {
         Insurance memory insurance = insurances[id];
         insurances[id].state = InsuranceState.Refunded;
         uint amountPaid = insurance.amountPaid;

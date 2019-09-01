@@ -7,14 +7,24 @@ contract('Flight Surety Tests', async (accounts) => {
   var config;
   before('setup contract', async () => {
     config = await Test.Config(accounts);
-    await config.flightSuretyData.authorizeCaller(config.flightSuretyApp.address);
+    await config.flightSuretyData.authorizeContract(config.flightSuretyApp.address);
+    await config.flightSuretyData.authorizeContract(config.owner);
   });
+
+    it(`Owners of contracts and first airline are the same`, async function () {
+
+        let flightAppOwner = await config.flightSuretyApp.getOwner.call();
+        let flightDataOwner = await config.flightSuretyData.getOwner.call();
+        assert.equal(flightAppOwner, config.firstAirline, "First airline should own FlighSuretyApp contract instance");
+        assert.equal(flightDataOwner, config.firstAirline, "First airline should own FlighSuretyApp contract instance");
+
+    });
 
   /****************************************************************************************/
   /* Operations and Settings                                                              */
   /****************************************************************************************/
 
-  it(`(multiparty) has correct initial isOperational() value`, async function () {
+  /*it(`(multiparty) has correct initial isOperational() value`, async function () {
 
     // Get operating status
     let status = await config.flightSuretyData.isOperational.call();
@@ -88,7 +98,7 @@ contract('Flight Surety Tests', async (accounts) => {
     // ASSERT
     assert.equal(result, false, "Airline should not be able to register another airline if it hasn't provided funding");
 
-  });
+  });*/
  
 
 });

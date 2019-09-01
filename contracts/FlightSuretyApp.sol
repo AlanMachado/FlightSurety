@@ -1,4 +1,4 @@
-pragma solidity ^0.4.25;
+pragma solidity ^0.5.8;
 
 // It's important to avoid vulnerabilities due to numeric overflow bugs
 // OpenZeppelin's SafeMath library, when used correctly, protects agains such bugs
@@ -117,7 +117,7 @@ contract FlightSuretyApp {
     /*                                       UTILITY FUNCTIONS                                  */
     /********************************************************************************************/
 
-    function isOperational() public pure returns (bool){
+    function isOperational() public view returns (bool){
         return flightData.isOperational();
         // Modify to call data contract's status
     }
@@ -152,15 +152,15 @@ contract FlightSuretyApp {
         return flightData.isFlightRegistered(airline, flightCode, departureTime);
     }
 
-    function defineInsuranceMultiplier(uint value) internal returns (uint multi){
-        uint memory multi;
-        if (value <= Multiplier.simple) {
-            multi = Multiplier.simple;
-        } else if( value <= Multiplier.plus) {
-            multi = Multiplier.plus;
+    function defineInsuranceMultiplier(uint value) internal pure returns (uint multi){
+        if (value <= uint(Multiplier.simple)) {
+            multi = uint(Multiplier.simple);
+        } else if( value <= uint(Multiplier.plus)) {
+            multi = uint(Multiplier.plus);
         }
 
         return multi;
+
     }
 
     /********************************************************************************************/
@@ -173,8 +173,8 @@ contract FlightSuretyApp {
      *
      */
     function registerAirline(address newAirline) external requireIsOperational requireAirlineRegistered requireAirlineFunded requireAirlineAccepted returns (bool success){
-        bool memory registered = isAirlineRegistered(newAirline);
-        bool memory accepted = isAirlineAccepted(newAirline);
+        bool registered = isAirlineRegistered(newAirline);
+        bool accepted = isAirlineAccepted(newAirline);
         if (registered && !accepted) {
             flightData.voteAirline(newAirline, msg.sender, minToAccept);
         } else if(!registered){
@@ -193,11 +193,9 @@ contract FlightSuretyApp {
         flightData.registerFlight(msg.sender, flightCode, departureTime);
     }
 
-    function InsureFlight(address airline, string memory flight, uint departureTime) public payable returns(uint id){
+    function InsureFlight(address airline, string memory flight, uint departureTime) public payable {
         bytes32 key = getFlightKey(airline, flight, departureTime);
         flightData.buyInsurance.value(msg.value)(key, msg.sender);
-
-
     }
 
     function processFlightStatus(address airline, string memory flightCode, uint256 departureTime, uint8 statusCode) internal requireIsOperational {
@@ -205,7 +203,7 @@ contract FlightSuretyApp {
 
             bytes32 key = getFlightKey(airline, flightCode, departureTime);
             uint[] memory _insurances = flightData.getInsurancesFromFlight(key);
-            uint multi = Multiplier.noPAYER;
+            uint multi = uint(Multiplier.noPAYER);
 
             for (uint i = 0; i < _insurances.length; i++) {
                 (, uint amountPaid,) = flightData.getInsurance(_insurances[i]);
@@ -217,7 +215,7 @@ contract FlightSuretyApp {
 
 
     // Generate a request for oracles to fetch flight information
-    function fetchFlightStatus(address airline, string flight, uint256 timestamp) external {
+    function fetchFlightStatus(address airline, string calldata flight, uint256 timestamp) external {
         uint8 index = getRandomIndex(msg.sender);
 
         bytes32 key = keccak256(abi.encodePacked(index, airline, flight, timestamp));
@@ -290,7 +288,7 @@ contract FlightSuretyApp {
             });
     }
 
-    function getMyIndexes() view external returns (uint8[3]){
+    function getMyIndexes() view external returns (uint8[3] memory){
         require(oracles[msg.sender].isRegistered, "Not registered as an oracle");
 
         return oracles[msg.sender].indexes;
@@ -303,7 +301,7 @@ contract FlightSuretyApp {
     // For the response to be accepted, there must be a pending request that is open
     // and matches one of the three Indexes randomly assigned to the oracle at the
     // time of registration (i.e. uninvited oracles are not welcome)
-    function submitOracleResponse(uint8 index, address airline, string flight, uint256 timestamp, uint8 statusCode) external {
+    function submitOracleResponse(uint8 index, address airline, string calldata flight, uint256 timestamp, uint8 statusCode) external {
         require((oracles[msg.sender].indexes[0] == index) || (oracles[msg.sender].indexes[1] == index) || (oracles[msg.sender].indexes[2] == index), "Index does not match oracle request");
 
 
@@ -325,12 +323,12 @@ contract FlightSuretyApp {
     }
 
 
-    function getFlightKey(address airline, string flight, uint256 timestamp) pure internal returns (bytes32){
+    function getFlightKey(address airline, string memory flight, uint256 timestamp) pure internal returns (bytes32){
         return keccak256(abi.encodePacked(airline, flight, timestamp));
     }
 
     // Returns array of three non-duplicating integers from 0-9
-    function generateIndexes(address account) internal returns (uint8[3]){
+    function generateIndexes(address account) internal returns (uint8[3] memory){
         uint8[3] memory indexes;
         indexes[0] = getRandomIndex(account);
 
