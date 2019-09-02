@@ -21,10 +21,10 @@ var Config = async function(accounts) {
 
 
     let owner = accounts[0];
-    let firstAirline = accounts[1];
+    let firstAirline = accounts[0];
 
     let flightSuretyData = await FlightSuretyData.new();
-    let flightSuretyApp = await FlightSuretyApp.new();
+    let flightSuretyApp = await FlightSuretyApp.new(flightSuretyData.address);
 
     
     return {
@@ -33,7 +33,13 @@ var Config = async function(accounts) {
         weiMultiple: (new BigNumber(10)).pow(18),
         testAddresses: testAddresses,
         flightSuretyData: flightSuretyData,
-        flightSuretyApp: flightSuretyApp
+        flightSuretyApp: flightSuretyApp,
+        STATUS_CODE_UNKNOWN: new BigNumber(0),
+        STATUS_CODE_ON_TIME: new BigNumber(10),
+        STATUS_CODE_LATE_AIRLINE: new BigNumber(20),
+        STATUS_CODE_LATE_WEATHER: new BigNumber(30),
+        STATUS_CODE_LATE_TECHNICAL: new BigNumber(40),
+        STATUS_CODE_LATE_OTHER: new BigNumber(50)
     }
 }
 

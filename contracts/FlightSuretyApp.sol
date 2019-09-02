@@ -160,13 +160,15 @@ contract FlightSuretyApp {
         }
 
         return multi;
+    }
 
+    function getOwner() external view requireContractOwner returns(address owner) {
+        return contractOwner;
     }
 
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
     /********************************************************************************************/
-
 
     /**
      * @dev Add an airline to the registration queue

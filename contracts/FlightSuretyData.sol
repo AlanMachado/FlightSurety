@@ -11,7 +11,7 @@ contract FlightSuretyData {
 
     address private contractOwner;                                      // Account used to deploy contract
     bool private operational = true;                                    // Blocks all state changes throughout the contract if false
-    uint airLineCount = 0;
+    uint airLineCount = 1;
     uint flightCount = 1;
     uint insuranceCount = 1;
     uint constant flightStatusDefault = 0;
@@ -211,6 +211,10 @@ contract FlightSuretyData {
             }
         }
         return insured;
+    }
+
+    function getOwner() external view requireContractOwner returns(address owner) {
+        return contractOwner;
     }
 
 
