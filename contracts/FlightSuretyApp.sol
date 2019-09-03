@@ -32,7 +32,7 @@ contract FlightSuretyApp {
         noPAYER, simple, plus
     }
 
-    uint private constant minToAccept = 5;
+    uint private constant minToAccept = 4;
     uint private constant fundCost = 10 ether;
 
     struct Flight {
@@ -213,6 +213,11 @@ contract FlightSuretyApp {
                 flightData.creditInsurees(_insurances[i], multi);
             }
         }
+    }
+
+    // for tests only
+    function testProcessFlightStatus(address _airline, string calldata _flight, uint256 _timestamp, uint8 statusCode) external requireContractOwner requireIsOperational {
+        processFlightStatus(_airline, _flight, _timestamp, statusCode);
     }
 
 
