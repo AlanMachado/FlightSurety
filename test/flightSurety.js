@@ -7,6 +7,7 @@ contract('Flight Surety Tests', async (accounts) => {
     var config;
     let flightCode = '222222';
     let departureTime = Date.now();
+    const TEST_ORACLES_COUNT = 10;
     before('setup contract', async () => {
         config = await Test.Config(accounts);
         await config.flightSuretyData.authorizeContract(config.flightSuretyApp.address);
@@ -205,7 +206,7 @@ contract('Flight Surety Tests', async (accounts) => {
 
     });
 
-    it('Nominate the fifth airline four times so its accepted', async () => {
+    it('Elect the fifth airline four times so its accepted', async () => {
         // Fund the first 4 airlines
         // ARRANGE
         let firstAirline = accounts[0];
@@ -288,19 +289,20 @@ contract('Flight Surety Tests', async (accounts) => {
             await config.flightSuretyApp.withdrawCredits({from: passenger});
         }
         catch(e){
-            console.log(e.message);
+            // console.log(e.message);
             callpaywith0balance = false;
         }
-
         assert.equal(callpaywith0balance, false, "Should not be able to call pay with no credit balance");
+
+        let passenger1_insured = await config.flightSuretyApp.isPassengerInsured.call(passenger, airline, flightCode, departureTime, {from: config.firstAirline});
+        assert.equal(passenger1_insured, true, "passenger should not be insured yet");
 
         try {
             callpaywith0balance = true;
             await config.flightSuretyApp.testProcessFlightStatus(airline, flightCode, departureTime, config.STATUS_CODE_LATE_AIRLINE);
             await config.flightSuretyApp.withdrawCredits({from: passenger});
-
         } catch(e){
-            console.log(e);
+            console.log(e, e.message);
             callpaywith0balance = false;
         }
 
@@ -308,6 +310,51 @@ contract('Flight Surety Tests', async (accounts) => {
 
     });
 
+    it('can register oracles', async () => {
 
+        // ARRANGE
+        let fee = await config.flightSuretyApp.REGISTRATION_FEE.call();
 
+        // ACT
+        for(let a=1; a<TEST_ORACLES_COUNT; a++) {
+            await config.flightSuretyApp.registerOracle({ from: accounts[a], value: fee });
+            let result = await config.flightSuretyApp.getMyIndexes.call({from: accounts[a]});
+            console.log(`Oracle Registered: ${result[0]}, ${result[1]}, ${result[2]}`);
+        }
+    });
+
+    it('can request flight status', async () => {
+
+        // ARRANGE
+        let airline = accounts[1];
+        // Submit a request for oracles to get status information for a flight
+        try{
+            await config.flightSuretyApp.fetchFlightStatus(airline, flightCode, departureTime);
+        }
+        catch(e){
+            console.log(e.message);
+        }
+        // ACT
+
+        // Since the Index assigned to each test account is opaque by design
+        // loop through all the accounts and for each account, all its Indexes (indices?)
+        // and submit a response. The contract will reject a submission if it was
+        // not requested so while sub-optimal, it's a good test of that feature
+        for(let a=1; a<TEST_ORACLES_COUNT; a++) {
+
+            // Get oracle information
+            let oracleIndexes = await config.flightSuretyApp.getMyIndexes.call({ from: accounts[a]});
+            for(let idx=0;idx<3;idx++) {
+
+                try {
+                    // Submit a response...it will only be accepted if there is an Index match
+                    await config.flightSuretyApp.submitOracleResponse(oracleIndexes[idx], airline, flightCode, departureTime, config.STATUS_CODE_ON_TIME, { from: accounts[a] });
+
+                }
+                catch(e) {
+                }
+
+            }
+        }
+    });
 });

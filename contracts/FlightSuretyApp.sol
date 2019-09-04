@@ -32,6 +32,9 @@ contract FlightSuretyApp {
         noPAYER, simple, plus
     }
 
+    uint private constant simplePlan = 1 ether;
+    uint private constant plusPlan = 2 ether;
+
     uint private constant minToAccept = 4;
     uint private constant fundCost = 10 ether;
 
@@ -43,7 +46,6 @@ contract FlightSuretyApp {
     }
 
     mapping(bytes32 => Flight) private flights;
-
 
     /********************************************************************************************/
     /*                                       FUNCTION MODIFIERS                                 */
@@ -152,10 +154,11 @@ contract FlightSuretyApp {
         return flightData.isFlightRegistered(airline, flightCode, departureTime);
     }
 
-    function defineInsuranceMultiplier(uint value) internal pure returns (uint multi){
-        if (value <= uint(Multiplier.simple)) {
+    function defineInsuranceMultiplier(uint value) internal pure returns (uint _multi){
+        uint multi = uint(Multiplier.noPAYER);
+        if (value <= simplePlan) {
             multi = uint(Multiplier.simple);
-        } else if( value <= uint(Multiplier.plus)) {
+        } else if( value >= plusPlan) {
             multi = uint(Multiplier.plus);
         }
 
@@ -205,11 +208,10 @@ contract FlightSuretyApp {
 
             bytes32 key = getFlightKey(airline, flightCode, departureTime);
             uint[] memory _insurances = flightData.getInsurancesFromFlight(key);
-            uint multi = uint(Multiplier.noPAYER);
 
             for (uint i = 0; i < _insurances.length; i++) {
                 (, uint amountPaid,) = flightData.getInsurance(_insurances[i]);
-                multi = defineInsuranceMultiplier(amountPaid);
+                uint multi = defineInsuranceMultiplier(amountPaid);
                 flightData.creditInsurees(_insurances[i], multi);
             }
         }
